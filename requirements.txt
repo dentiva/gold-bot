@@ -3,4 +3,7 @@ requests
 numpy
 yfinance
 py-clob-client
+eth-account
+web3
 gunicorn
+
