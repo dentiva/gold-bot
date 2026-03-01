@@ -1,0 +1,6 @@
+flask
+requests
+numpy
+yfinance
+py-clob-client
+gunicorn
