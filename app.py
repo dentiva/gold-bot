@@ -130,12 +130,13 @@ def tradingview_webhook():
                 log_trade("SELL", yes)
             open_positions -= ORDER_SIZE
 
+    
     return jsonify({
         "status": "ok",
         "action": action,
         "yes": yes,
         "positions": open_positions,
-        "pnl": compute_pnl()
+        "pnl": compute_pnl()})
    @app.route('/')
 def index():
     return '''
@@ -167,4 +168,5 @@ def health():
         "trades": len(trades),
         "thresholds": thresholds
     })
+
 
