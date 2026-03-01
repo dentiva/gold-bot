@@ -152,12 +152,11 @@ def index():
             <li>/webhook - TradingView webhook (POST)</li>
         </ul>
         <p>Status: Running ✅</p>
-    </body>
+    body>
     </html>
     '''
 
- })
-
+ 
 @app.route('/health')
 def health():
     return jsonify({
@@ -168,5 +167,6 @@ def health():
         "trades": len(trades),
         "thresholds": thresholds
     })
+
 
 
