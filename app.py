@@ -10,10 +10,10 @@ from py_clob_client.client import ClobClient
 # CONFIG
 # ==========================================================
 YES_TOKEN = "53822162563147299519165214885693344405498185564842997386824738830845754444209"
-ORDER_SIZE = 1
+ORDER_SIZE = .1
 MAX_LOSS = -3.0
 MAX_POSITION = 3
-DRY_RUN = True  # IMPORTANT: Start in True
+DRY_RUN = False  # IMPORTANT: Start in True
 
 # ==========================================================
 # POLYMARKET INITIALIZATION
@@ -251,3 +251,4 @@ def health():
         "pnl": compute_pnl(),
         "state": strategy_state
     })
+
