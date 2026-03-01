@@ -2,18 +2,53 @@ from flask import Flask, request, jsonify
 import requests
 import os
 import json
-import numpy as np
-import yfinance as yf
 from datetime import datetime, timedelta
+from eth_account import Account
+from py_clob_client.client import ClobClient
 
 # ==========================================================
 # CONFIG
 # ==========================================================
-YES_TOKEN    = "53822162563147299519165214885693344405498185564842997386824738830845754444209"
-ORDER_SIZE   = 1
-MAX_LOSS     = -3.0
+YES_TOKEN = "53822162563147299519165214885693344405498185564842997386824738830845754444209"
+ORDER_SIZE = 1
+MAX_LOSS = -3.0
 MAX_POSITION = 3
-DRY_RUN      = True
+DRY_RUN = True  # IMPORTANT: Start in True
+
+# ==========================================================
+# POLYMARKET INITIALIZATION
+# ==========================================================
+POLY_PRIVATE_KEY = os.environ.get("POLY_PRIVATE_KEY")
+POLY_API_KEY = os.environ.get("POLY_API_KEY")
+POLY_SECRET = os.environ.get("POLY_SECRET")
+POLY_PASSPHRASE = os.environ.get("POLY_PASSPHRASE")
+
+clob = None
+
+if POLY_PRIVATE_KEY:
+    try:
+        Account.from_key(POLY_PRIVATE_KEY)
+
+        clob = ClobClient(
+            "https://clob.polymarket.com",
+            key=POLY_PRIVATE_KEY,
+            chain_id=137
+        )
+
+        clob.set_api_creds({
+            "apiKey": POLY_API_KEY,
+            "apiSecret": POLY_SECRET,
+            "apiPassphrase": POLY_PASSPHRASE,
+        })
+
+        print("✅ Polymarket client initialized")
+
+    except Exception as e:
+        print("❌ Polymarket init failed:", e)
+        clob = None
+else:
+    print("⚠️ No POLY_PRIVATE_KEY found. Running in DRY_RUN mode.")
+    DRY_RUN = True
 
 # ==========================================================
 # STATE
@@ -23,9 +58,7 @@ open_positions = 0
 strategy_state = "IDLE"
 cooldown_until = None
 last_signal = {"action": None, "time": None}
-yes_history = []
 
-# Load persisted trades
 if os.path.exists("trades.json"):
     with open("trades.json", "r") as f:
         trades = json.load(f)
@@ -41,7 +74,30 @@ if os.path.exists("trades.json"):
 app = Flask(__name__)
 
 # ==========================================================
-# MARKET DATA
+# POLYMARKET ORDER FUNCTION
+# ==========================================================
+def place_order(side, price, size):
+    if DRY_RUN or not clob:
+        return {"status": "dry_run"}
+
+    try:
+        order = clob.create_order(
+            token_id=YES_TOKEN,
+            price=price,
+            size=size,
+            side=side
+        )
+
+        signed = clob.sign_order(order)
+        response = clob.post_order(signed)
+
+        return response
+
+    except Exception as e:
+        return {"error": str(e)}
+
+# ==========================================================
+# PRICE FETCH
 # ==========================================================
 def get_yes_price():
     try:
@@ -49,16 +105,12 @@ def get_yes_price():
             f"https://clob.polymarket.com/last-trade-price?token_id={YES_TOKEN}",
             timeout=3
         )
-        price = float(r.json()["price"])
-        yes_history.append(price)
-        if len(yes_history) > 100:
-            yes_history.pop(0)
-        return price
+        return float(r.json()["price"])
     except:
         return None
 
 # ==========================================================
-# PNL + STATS
+# PNL
 # ==========================================================
 def compute_pnl():
     pnl = 0.0
@@ -90,7 +142,6 @@ def compute_win_stats():
 
     total = wins + losses
     win_rate = (wins / total * 100) if total > 0 else 0
-
     return wins, losses, round(win_rate, 2)
 
 
@@ -114,7 +165,6 @@ def home():
     realized_pnl = compute_pnl()
     wins, losses, win_rate = compute_win_stats()
 
-    # Unrealized
     unrealized = 0.0
     avg_entry = 0.0
 
@@ -127,85 +177,16 @@ def home():
     total_pnl = realized_pnl + unrealized
     pnl_color = "lime" if total_pnl >= 0 else "red"
 
-    last_trades = trades[-5:][::-1]
-
-    trades_html = ""
-    for t in last_trades:
-        color = "lime" if t["action"] == "BUY" else "red"
-        trades_html += f"""
-        <tr>
-            <td style='color:{color}'>{t['action']}</td>
-            <td>{t['price']}</td>
-            <td>{t['time']}</td>
-        </tr>
-        """
-
     return f"""
-    <html>
-    <head>
-        <meta http-equiv="refresh" content="10">
-        <style>
-            body {{
-                background-color: #0f172a;
-                color: #e2e8f0;
-                font-family: Arial;
-                padding: 40px;
-            }}
-            .card {{
-                background: #1e293b;
-                padding: 20px;
-                border-radius: 10px;
-                margin-bottom: 20px;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-            }}
-            td {{
-                padding: 8px;
-                border-bottom: 1px solid #334155;
-            }}
-            h1 {{
-                color: #38bdf8;
-            }}
-        </style>
-    </head>
-    <body>
-
-        <h1>Gold Polymarket Rotation Bot</h1>
-
-        <div class="card">
-            <h2>Status</h2>
-            <p><b>Mode:</b> {"DRY RUN" if DRY_RUN else "LIVE"}</p>
-            <p><b>Strategy State:</b> {strategy_state}</p>
-            <p><b>YES Price:</b> {yes}</p>
-            <p><b>Open Positions:</b> {open_positions}</p>
-            <p><b>Average Entry:</b> {round(avg_entry,4) if avg_entry else 0}</p>
-            <p><b>Unrealized PnL:</b> {round(unrealized,4)}</p>
-            <p><b>Total PnL:</b> <span style='color:{pnl_color}'>${round(total_pnl,4)}</span></p>
-        </div>
-
-        <div class="card">
-            <h2>Performance</h2>
-            <p><b>Wins:</b> {wins}</p>
-            <p><b>Losses:</b> {losses}</p>
-            <p><b>Win Rate:</b> {win_rate}%</p>
-            <p><b>Total Trades:</b> {len(trades)}</p>
-        </div>
-
-        <div class="card">
-            <h2>Last 5 Trades</h2>
-            <table>
-                {trades_html}
-            </table>
-        </div>
-
-        <div class="card">
-            <p><a href='/health'>Health Endpoint</a></p>
-        </div>
-
-    </body>
-    </html>
+    <h2>Gold Polymarket Bot</h2>
+    <p><b>Mode:</b> {"DRY RUN" if DRY_RUN else "LIVE"}</p>
+    <p><b>Strategy State:</b> {strategy_state}</p>
+    <p><b>YES Price:</b> {yes}</p>
+    <p><b>Open Positions:</b> {open_positions}</p>
+    <p><b>Avg Entry:</b> {round(avg_entry,4) if avg_entry else 0}</p>
+    <p><b>Total PnL:</b> <span style='color:{pnl_color}'>${round(total_pnl,4)}</span></p>
+    <p><b>Wins:</b> {wins} | <b>Losses:</b> {losses} | <b>Win Rate:</b> {win_rate}%</p>
+    <p><a href='/health'>Health Endpoint</a></p>
     """
 
 # ==========================================================
@@ -219,14 +200,6 @@ def webhook():
     action = data.get("action", "").upper()
     now = datetime.now()
 
-    # Cooldown check
-    if strategy_state == "COOLDOWN":
-        if cooldown_until and now < cooldown_until:
-            return jsonify({"status": "cooldown_active"})
-        else:
-            strategy_state = "IDLE"
-
-    # Duplicate protection
     if last_signal["action"] == action and last_signal["time"]:
         if (now - last_signal["time"]).seconds < 30:
             return jsonify({"status": "duplicate ignored"})
@@ -239,26 +212,25 @@ def webhook():
 
     pnl = compute_pnl()
 
-    # Global suspension
     if pnl <= MAX_LOSS:
         strategy_state = "SUSPENDED"
         return jsonify({"status": "suspended"})
 
     if action == "BUY" and strategy_state == "IDLE":
-        if open_positions < MAX_POSITION:
+        response = place_order("BUY", yes, ORDER_SIZE)
+
+        if "error" not in response:
             log_trade("BUY", yes)
             open_positions += ORDER_SIZE
             strategy_state = "LONG"
 
     elif action == "SELL" and strategy_state == "LONG":
-        if open_positions > 0:
+        response = place_order("SELL", yes, ORDER_SIZE)
+
+        if "error" not in response:
             log_trade("SELL", yes)
             open_positions -= ORDER_SIZE
             strategy_state = "IDLE"
-
-            if pnl < 0:
-                strategy_state = "COOLDOWN"
-                cooldown_until = now + timedelta(minutes=5)
 
     return jsonify({
         "status": "ok",
@@ -274,8 +246,8 @@ def webhook():
 def health():
     return jsonify({
         "status": "alive",
+        "mode": "DRY_RUN" if DRY_RUN else "LIVE",
         "positions": open_positions,
         "pnl": compute_pnl(),
-        "state": strategy_state,
-        "trades": len(trades)
+        "state": strategy_state
     })
