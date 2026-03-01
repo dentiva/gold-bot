@@ -136,7 +136,26 @@ def tradingview_webhook():
         "yes": yes,
         "positions": open_positions,
         "pnl": compute_pnl()
-    })
+   @app.route('/')
+def index():
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head><title>Gold Bot</title></head>
+    <body style="font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px;">
+        <h1>🤖 Gold Bot</h1>
+        <p>Automated gold trading bot with Polymarket integration</p>
+        <h2>Available Endpoints:</h2>
+        <ul>
+            <li><a href="/health">/health</a> - Health check and bot status</li>
+            <li>/webhook - TradingView webhook (POST)</li>
+        </ul>
+        <p>Status: Running ✅</p>
+    </body>
+    </html>
+    '''
+
+ })
 
 @app.route('/health')
 def health():
@@ -148,3 +167,4 @@ def health():
         "trades": len(trades),
         "thresholds": thresholds
     })
+
